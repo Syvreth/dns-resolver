@@ -1,9 +1,9 @@
 //! DNS Recursive Resolver
 //!
-//! Implements iterative DNS resolution starting from root servers.
-//! Follows referrals through the DNS hierarchy to resolve domain names.
+//! Implements iterative DNS resolution. Each lookup starts at the closest zone whose
+//! nameservers are cached (or at the root servers) and follows referrals down the hierarchy.
 
-use crate::cache::{DnsCache, NEGATIVE_TTL};
+use crate::cache::{in_zone, norm, DnsCache, NEGATIVE_TTL};
 use crate::packet::*;
 use crate::transport::*;
 use std::collections::HashSet;
@@ -27,12 +27,30 @@ const ROOT_SERVERS: &[&str] = &[
 
 /// Prefix of the error returned when a name does not exist.
 const NXDOMAIN: &str = "NXDOMAIN";
+/// Prefix of the error returned when a name exists but has no records of the asked type.
+const NODATA: &str = "NODATA";
+/// Prefix of the error returned when a lookup goes too deep.
+const DEPTH_EXCEEDED: &str = "Resolution depth exceeded";
 
 struct QueryState {
     domain: String,
     qtype: RecordType,
     depth: u32,
+    /// The zone the servers being asked are authoritative for ("" for the root).
+    zone: String,
     visited: HashSet<String>,
+}
+
+/// Errors that asking other servers won't change: the answer itself, or a runaway lookup.
+fn is_final(error: &str) -> bool {
+    error.starts_with(NXDOMAIN) || error.starts_with(NODATA) || error.starts_with(DEPTH_EXCEEDED)
+}
+
+/// A referral's zone is cached only if it contains the name being resolved and lies strictly
+/// below the zone of the servers that sent it, so a lame or misbehaving server can't plant
+/// nameservers for an unrelated zone or for a parent such as "com". Names are normalised.
+fn may_cache_delegation(zone: &str, domain: &str, current_zone: &str) -> bool {
+    zone != current_zone && in_zone(domain, zone) && in_zone(zone, current_zone)
 }
 
 fn resolve_step(
@@ -43,7 +61,7 @@ fn resolve_step(
     state.depth += 1;
 
     if state.depth > 20 {
-        return Err(format!("Resolution depth exceeded for {}", state.domain));
+        return Err(format!("{} for {}", DEPTH_EXCEEDED, state.domain));
     }
 
     // Check the cache before sending anything
@@ -57,13 +75,7 @@ fn resolve_step(
     }
     if let Some(target) = cache.get_cname(&state.domain) {
         println!("DEBUG: Cache hit: CNAME {} -> {}", state.domain, target);
-        let mut new_state = QueryState {
-            domain: target,
-            qtype: state.qtype,
-            depth: state.depth,
-            visited: HashSet::new(),
-        };
-        return resolve_step(&mut new_state, ROOT_SERVERS, cache);
+        return resolve_inner(&target, state.qtype, cache, state.depth);
     }
 
     let mut last_error = String::new();
@@ -197,14 +209,9 @@ fn resolve_step(
                 println!("DEBUG: Caching CNAME {} -> {} (TTL {})", state.domain, cname_target, ttl);
                 cache.put_cname(&state.domain, cname_target, ttl);
             }
-            let mut new_state = QueryState {
-                domain: cname_target.clone(),
-                qtype: state.qtype,
-                depth: state.depth,
-                visited: HashSet::new(),
-            };
-            // CNAME may point into a different domain, so restart from roots
-            return resolve_step(&mut new_state, ROOT_SERVERS, cache);
+            // The CNAME may point into a different zone, so start over from the closest
+            // cached zone for the target (or the root)
+            return resolve_inner(cname_target, state.qtype, cache, state.depth);
         }
 
         // Check for referral (NS records in authority section)
@@ -214,7 +221,16 @@ fn resolve_step(
             for ns in &ns_records {
                 println!("DEBUG:   NS: {}", ns);
             }
-            
+
+            // The zone being delegated to, with its NS TTL, if it is one we may cache.
+            // The queries below go to that zone's servers whether or not it is cached.
+            let delegation = find_referral_zone(&msg)
+                .map(|(zone, ttl)| (norm(&zone), ttl))
+                .filter(|(zone, _)| may_cache_delegation(zone, &norm(&state.domain), &state.zone));
+            let child_zone = delegation
+                .as_ref()
+                .map_or_else(|| state.zone.clone(), |(zone, _)| zone.clone());
+
             // Look for NS server addresses in additional section
             let ns_ips = find_additional_ns_ips(&msg, &ns_records);
             if !ns_ips.is_empty() {
@@ -222,12 +238,17 @@ fn resolve_step(
                 for ip in &ns_ips {
                     println!("DEBUG:   {}", ip);
                 }
-                
+                if let Some((zone, ttl)) = &delegation {
+                    println!("DEBUG: Caching delegation {} -> {} server(s) (TTL {})", zone, ns_ips.len(), ttl);
+                    cache.put_delegation(zone, ns_ips.clone(), *ttl);
+                }
+
                 let ns_refs: Vec<&str> = ns_ips.iter().map(|s| s.as_str()).collect();
                 let mut new_state = QueryState {
                     domain: state.domain.clone(),
                     qtype: state.qtype,
                     depth: state.depth,
+                    zone: child_zone,
                     visited: HashSet::new(),
                 };
                 return resolve_step(&mut new_state, &ns_refs, cache);
@@ -248,13 +269,20 @@ fn resolve_step(
                         continue;
                     }
                 };
-                
+                if let Some((zone, ttl)) = &delegation {
+                    for (ip, _) in &resolved_ips {
+                        println!("DEBUG: Caching delegation {} -> {} via {} (TTL {})", zone, ip, ns_name, ttl);
+                        cache.add_delegation_server(zone, ip.clone(), *ttl);
+                    }
+                }
+
                 for (ip, _) in resolved_ips {
                     println!("DEBUG: Resolved NS {} -> {}, trying to query", ns_name, ip);
                     let mut new_state = QueryState {
                         domain: state.domain.clone(),
                         qtype: state.qtype,
                         depth: state.depth,
+                        zone: child_zone.clone(),
                         visited: HashSet::new(),
                     };
                     let servers: Vec<&str> = vec![&ip];
@@ -275,7 +303,7 @@ fn resolve_step(
         } else {
             // No NS referral - check if this is an authoritative "no data" response
             if has_soa_for_domain(&msg, &state.domain) {
-                return Err(format!("No {} records for {}", state.qtype, state.domain));
+                return Err(format!("{} for {}: no {} records", NODATA, state.domain, state.qtype));
             }
             last_error = format!("No answer, no referral from {} for {}", server_str, state.domain);
             continue;
@@ -285,20 +313,35 @@ fn resolve_step(
     Err(format!("Failed to resolve {}: {}", state.domain, last_error))
 }
 
-/// Resolve from the root, starting at `depth` (0 for a fresh lookup).
+/// Resolve `domain` starting at `depth` (0 for a fresh lookup). Starts at the closest zone
+/// whose nameservers are cached, and falls back to the root servers if nothing is cached or
+/// none of the cached servers can answer.
 fn resolve_inner(
     domain: &str,
     qtype: RecordType,
     cache: &mut DnsCache,
     depth: u32,
 ) -> Result<Vec<(String, Option<String>)>, String> {
-    let mut state = QueryState {
+    let new_state = |zone: &str| QueryState {
         domain: domain.to_string(),
         qtype,
         depth,
+        zone: zone.to_string(),
         visited: HashSet::new(),
     };
-    resolve_step(&mut state, ROOT_SERVERS, cache)
+
+    if let Some((zone, servers)) = cache.closest_delegation(domain) {
+        println!("DEBUG: Starting {} at cached zone {} ({} server(s))", domain, zone, servers.len());
+        let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
+        match resolve_step(&mut new_state(&zone), &server_refs, cache) {
+            Err(e) if !is_final(&e) => {
+                println!("DEBUG: Cached servers for {} failed ({}), falling back to the root", zone, e);
+            }
+            result => return result,
+        }
+    }
+
+    resolve_step(&mut new_state(""), ROOT_SERVERS, cache)
 }
 
 pub fn resolve_debug(domain: &str, qtype: RecordType) -> Result<Vec<(String, Option<String>)>, String> {
@@ -317,4 +360,38 @@ fn find_min_ttl(msg: &Message) -> u32 {
         }
     }
     min_ttl
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegations_are_cached_only_below_the_current_zone_and_above_the_name() {
+        // Normal referrals: root -> com -> amazon.com -> 47cf2c8c9-frontier.amazon.com
+        assert!(may_cache_delegation("com", "www.amazon.com", ""));
+        assert!(may_cache_delegation("amazon.com", "www.amazon.com", "com"));
+        assert!(may_cache_delegation(
+            "47cf2c8c9-frontier.amazon.com",
+            "tp.47cf2c8c9-frontier.amazon.com",
+            "amazon.com"
+        ));
+        // A zone equal to the name itself is fine.
+        assert!(may_cache_delegation("amazon.com", "amazon.com", "com"));
+
+        // A zone that doesn't contain the name.
+        assert!(!may_cache_delegation("example.org", "www.amazon.com", "com"));
+        // An upward or sideways referral from a lame server.
+        assert!(!may_cache_delegation("com", "www.amazon.com", "amazon.com"));
+        assert!(!may_cache_delegation("amazon.com", "www.amazon.com", "amazon.com"));
+        assert!(!may_cache_delegation("other.com", "x.other.com", "amazon.com"));
+    }
+
+    #[test]
+    fn only_answers_and_runaway_lookups_are_final() {
+        assert!(is_final("NXDOMAIN for nope.example"));
+        assert!(is_final("NODATA for example.com: no AAAA records"));
+        assert!(is_final("Resolution depth exceeded for loop.example"));
+        assert!(!is_final("Failed to resolve example.com: Query to 1.2.3.4 failed: timed out"));
+    }
 }

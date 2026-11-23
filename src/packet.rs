@@ -514,6 +514,20 @@ pub fn find_cname_records(msg: &Message, domain: &str) -> Vec<String> {
     targets
 }
 
+/// The zone a referral delegates to (the owner name of the NS records in the authority
+/// section, e.g. "com") and the shortest TTL among those NS records.
+pub fn find_referral_zone(msg: &Message) -> Option<(String, u32)> {
+    let mut zone: Option<(String, u32)> = None;
+    for record in msg.authority.iter().filter(|r| r.rtype == RecordType::NS) {
+        match &mut zone {
+            None => zone = Some((record.name.clone(), record.ttl)),
+            Some((name, ttl)) if name.eq_ignore_ascii_case(&record.name) => *ttl = (*ttl).min(record.ttl),
+            Some(_) => {}
+        }
+    }
+    zone
+}
+
 /// Find all NS records in the authority section (for referrals)
 pub fn find_authority_ns_records(msg: &Message) -> Vec<String> {
     let mut ns_names = Vec::new();
@@ -546,4 +560,43 @@ pub fn find_additional_ns_ips(msg: &Message, ns_names: &[String]) -> Vec<String>
         }
     }
     ips
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(owner: &str, rtype: RecordType, ttl: u32) -> Record {
+        Record { name: owner.into(), rtype, rclass: 1, ttl, rdata: Vec::new(), target: None }
+    }
+
+    fn with_authority(authority: Vec<Record>) -> Message {
+        Message {
+            header: Header {
+                id: 0, qr: true, opcode: 0, aa: false, tc: false, rd: false, ra: false,
+                rcode: Rcode::NoError, question_count: 0, answer_count: 0,
+                authority_count: authority.len() as u16, additional_count: 0,
+            },
+            questions: Vec::new(),
+            answers: Vec::new(),
+            authority,
+            additional: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn referral_zone_is_the_ns_owner_with_the_shortest_ttl() {
+        let msg = with_authority(vec![
+            record("amazon.com", RecordType::NS, 172800),
+            record("Amazon.com", RecordType::NS, 3600),
+            record("amazon.com", RecordType::NS, 86400),
+        ]);
+        assert_eq!(find_referral_zone(&msg), Some(("amazon.com".into(), 3600)));
+    }
+
+    #[test]
+    fn no_ns_records_means_no_referral_zone() {
+        let msg = with_authority(vec![record("amazon.com", RecordType::SOA, 900)]);
+        assert_eq!(find_referral_zone(&msg), None);
+    }
 }

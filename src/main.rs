@@ -6,6 +6,7 @@
 mod packet;
 mod transport;
 mod resolver;
+mod cache;
 
 use std::env;
 

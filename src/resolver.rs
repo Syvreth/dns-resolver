@@ -3,6 +3,7 @@
 //! Implements iterative DNS resolution starting from root servers.
 //! Follows referrals through the DNS hierarchy to resolve domain names.
 
+use crate::cache::DnsCache;
 use crate::packet::*;
 use crate::transport::*;
 use std::collections::HashSet;
@@ -31,37 +32,23 @@ struct QueryState {
     visited: HashSet<String>,
 }
 
-pub fn resolve(domain: &str, qtype: RecordType) -> Result<Vec<(String, Option<String>)>, String> {
-    let mut state = QueryState {
-        domain: domain.to_string(),
-        qtype,
-        depth: 0,
-        visited: HashSet::new(),
-    };
-    resolve_step(&mut state, ROOT_SERVERS)
-}
-
-pub fn resolve_debug(domain: &str, qtype: RecordType) -> Result<Vec<(String, Option<String>)>, String> {
-    println!("=== Resolving {} ({:?}) ===", domain, qtype);
-    let mut state = QueryState {
-        domain: domain.to_string(),
-        qtype,
-        depth: 0,
-        visited: HashSet::new(),
-    };
-    let result = resolve_step(&mut state, ROOT_SERVERS)?;
-    println!("=== Resolution complete ===");
-    Ok(result)
-}
-
 fn resolve_step(
     state: &mut QueryState,
     servers: &[&str],
+    cache: &mut DnsCache,
 ) -> Result<Vec<(String, Option<String>)>, String> {
     state.depth += 1;
 
     if state.depth > 20 {
         return Err(format!("Resolution depth exceeded for {}", state.domain));
+    }
+
+    // Check cache first
+    if let Some(cached) = cache.get(&state.domain, state.qtype) {
+        if !cached.ips.is_empty() {
+            println!("DEBUG: Cache hit for {} ({:?}) - returning cached IPs", state.domain, state.qtype);
+            return Ok(cached.ips.clone());
+        }
     }
 
     let mut last_error = String::new();
@@ -138,9 +125,30 @@ fn resolve_step(
             }
         }
 
+        // Cache NS IPs from additional section before processing
+        {
+            let ns_names = find_authority_ns_records(&msg);
+            let ns_ips = find_additional_ns_ips(&msg, &ns_names);
+            for (ns_name, _ns_ip) in ns_names.iter().zip(ns_ips.iter()) {
+                // Find the actual IP for this NS name
+                for record in &msg.additional {
+                    if record.name.to_lowercase() == ns_name.to_lowercase()
+                        && record.rtype == RecordType::A
+                    {
+                        if let Some(ip) = record.get_ip() {
+                            println!("DEBUG: Caching NS {} -> {} (TTL {})", ns_name, ip, record.ttl);
+                            cache.set_ns_ips(ns_name, vec![ip], record.ttl);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         match msg.header.rcode {
             Rcode::NoError => {}
             Rcode::NameError => {
+                cache.set_rcode(&state.domain, state.qtype, 3, 300);
                 return Err(format!("NXDOMAIN for {}", state.domain));
             }
             Rcode::ServerFailure => {
@@ -160,6 +168,12 @@ fn resolve_step(
             for (ip, _) in &results {
                 println!("DEBUG:   {}", ip);
             }
+            // Cache the answer with minimum TTL from response
+            {
+                let ttl = find_min_ttl(&msg);
+                println!("DEBUG: Caching {} -> {} (TTL {})", state.domain, results.len(), ttl);
+                cache.set(&state.domain, state.qtype, results.clone(), ttl);
+            }
             return Ok(results);
         }
 
@@ -167,6 +181,12 @@ fn resolve_step(
         let cname_records = find_cname_records(&msg, &state.domain);
         if let Some(cname_target) = cname_records.first() {
             println!("DEBUG: CNAME {} -> {}", state.domain, cname_target);
+            // Cache the CNAME
+            {
+                let ttl = find_min_ttl(&msg);
+                println!("DEBUG: Caching CNAME {} -> {} (TTL {})", state.domain, cname_target, ttl);
+                cache.set_cname(&state.domain, cname_target.clone(), ttl);
+            }
             let mut new_state = QueryState {
                 domain: cname_target.clone(),
                 qtype: state.qtype,
@@ -174,7 +194,7 @@ fn resolve_step(
                 visited: HashSet::new(),
             };
             // CNAME may point into a different domain, so restart from roots
-            return resolve_step(&mut new_state, ROOT_SERVERS);
+            return resolve_step(&mut new_state, ROOT_SERVERS, cache);
         }
 
         // Check for referral (NS records in authority section)
@@ -200,7 +220,7 @@ fn resolve_step(
                     depth: state.depth,
                     visited: HashSet::new(),
                 };
-                return resolve_step(&mut new_state, &ns_refs);
+                return resolve_step(&mut new_state, &ns_refs, cache);
             }
             
             // If no IPs in additional section, resolve NS names one at a time and
@@ -208,34 +228,51 @@ fn resolve_step(
             println!("DEBUG: No NS IPs in additional section, trying NS names one at a time");
             for ns_name in &ns_records {
                 println!("DEBUG: Trying to resolve NS: {}", ns_name);
-                if let Ok(results) = resolve(ns_name, RecordType::A) {
-                    for (ip, _) in results {
-                        println!("DEBUG: Resolved NS {} -> {}, trying to query", ns_name, ip);
-                        let mut new_state = QueryState {
-                            domain: state.domain.clone(),
-                            qtype: state.qtype,
-                            depth: state.depth,
-                            visited: HashSet::new(),
-                        };
-                        let servers: Vec<&str> = vec![&ip];
-                        match resolve_step(&mut new_state, &servers) {
-                            Ok(found) => {
-                                println!("DEBUG: Got answer via {}", ip);
-                                return Ok(found);
-                            }
-                            Err(e) => {
-                                println!("DEBUG: Failed via {}: {}", ip, e);
-                            }
+                
+                // Check cache for NS name resolution
+                let ns_results = if let Some(cached_ns_ips) = cache.get_ns_ips(ns_name) {
+                    println!("DEBUG: Cache hit for NS {} - using cached IPs", ns_name);
+                    Some(cached_ns_ips.into_iter().map(|ip| (ip, None)).collect())
+                } else {
+                    None
+                };
+
+                let resolved_ips = match ns_results {
+                    Some(ips) => ips,
+                    None => {
+                        // Use resolve_with_cache to reuse the cache for NS name lookups
+                        match resolve_with_cache(ns_name, RecordType::A, cache) {
+                            Ok(results) => results,
+                            Err(_) => continue,
                         }
                     }
-                } else {
-                    println!("DEBUG: Failed to resolve NS: {}", ns_name);
+                };
+                
+                for (ip, _) in resolved_ips {
+                    println!("DEBUG: Resolved NS {} -> {}, trying to query", ns_name, ip);
+                    let mut new_state = QueryState {
+                        domain: state.domain.clone(),
+                        qtype: state.qtype,
+                        depth: state.depth,
+                        visited: HashSet::new(),
+                    };
+                    let servers: Vec<&str> = vec![&ip];
+                    match resolve_step(&mut new_state, &servers, cache) {
+                        Ok(found) => {
+                            println!("DEBUG: Got answer via {}", ip);
+                            return Ok(found);
+                        }
+                        Err(e) => {
+                            println!("DEBUG: Failed via {}: {}", ip, e);
+                        }
+                    }
                 }
             }
             // If none of the NS names worked, try next server
         } else {
             // No NS referral - check if this is an authoritative "no data" response
             if has_soa_for_domain(&msg, &state.domain) {
+                cache.set_rcode(&state.domain, state.qtype, 0, 300);
                 return Err(format!("No {} records for {}", state.qtype, state.domain));
             }
             last_error = format!("No answer, no referral from {} for {}", server_str, state.domain);
@@ -244,4 +281,37 @@ fn resolve_step(
     }
 
     Err(format!("Failed to resolve {}: {}", state.domain, last_error))
+}
+
+fn resolve_with_cache(domain: &str, qtype: RecordType, cache: &mut DnsCache) -> Result<Vec<(String, Option<String>)>, String> {
+    let mut state = QueryState {
+        domain: domain.to_string(),
+        qtype,
+        depth: 0,
+        visited: HashSet::new(),
+    };
+    resolve_step(&mut state, ROOT_SERVERS, cache)
+}
+
+pub fn resolve(domain: &str, qtype: RecordType) -> Result<Vec<(String, Option<String>)>, String> {
+    let mut cache = DnsCache::new();
+    resolve_with_cache(domain, qtype, &mut cache)
+}
+
+pub fn resolve_debug(domain: &str, qtype: RecordType) -> Result<Vec<(String, Option<String>)>, String> {
+    println!("=== Resolving {} ({:?}) ===", domain, qtype);
+    let mut cache = DnsCache::new();
+    let result = resolve_with_cache(domain, qtype, &mut cache)?;
+    println!("=== Resolution complete ===");
+    Ok(result)
+}
+
+fn find_min_ttl(msg: &Message) -> u32 {
+    let mut min_ttl = 3600; // Default 1 hour if no TTL found
+    for record in &msg.answers {
+        if record.ttl < min_ttl {
+            min_ttl = record.ttl;
+        }
+    }
+    min_ttl
 }

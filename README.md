@@ -11,6 +11,7 @@
 - **Hand-rolled packets:** encodes and decodes DNS messages byte by byte, including name compression
 - **CNAME chains:** follows aliases across zones, restarting from the root each time
 - **No-glue nameservers:** looks up nameservers that live in other zones
+- **EDNS0:** advertises a 4096-byte UDP payload so large replies aren't truncated
 - **TCP fallback:** retries over TCP when a reply comes back truncated
 - **A and AAAA** lookups, with a random query ID on every query
 
@@ -53,7 +54,7 @@ root (.)  ──►  .com TLD  ──►  amazon.com NS  ──►  answer
 > The checks under each item are how to tell it works.
 
 ### Phase 1: Speed
-- [ ] **EDNS0:** add an OPT record (type 41, 4096-byte payload) so root replies fit in UDP.
+- [x] **EDNS0:** add an OPT record (type 41, 4096-byte payload) so root replies fit in UDP.
   *Check: root replies show `TC=false`.*
 - [ ] **First working nameserver:** use the first nameserver that resolves instead of resolving all of them.
   *Check: `www.amazon.com` takes far fewer queries.*

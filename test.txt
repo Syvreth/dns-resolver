@@ -1,0 +1,228 @@
+Resolving: www.amazon.com (A)
+
+=== Resolving www.amazon.com (A) ===
+DEBUG: Querying 198.41.0.4 for www.amazon.com - got 839 bytes
+DEBUG: Parsed response from 198.41.0.4 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=13 Additional=27
+DEBUG: Found 13 NS records in authority (referral)
+DEBUG:   NS: l.gtld-servers.net
+DEBUG:   NS: j.gtld-servers.net
+DEBUG:   NS: h.gtld-servers.net
+DEBUG:   NS: d.gtld-servers.net
+DEBUG:   NS: b.gtld-servers.net
+DEBUG:   NS: f.gtld-servers.net
+DEBUG:   NS: k.gtld-servers.net
+DEBUG:   NS: m.gtld-servers.net
+DEBUG:   NS: i.gtld-servers.net
+DEBUG:   NS: g.gtld-servers.net
+DEBUG:   NS: a.gtld-servers.net
+DEBUG:   NS: c.gtld-servers.net
+DEBUG:   NS: e.gtld-servers.net
+DEBUG: Found 13 NS IPs in additional section
+DEBUG:   192.41.162.30
+DEBUG:   192.48.79.30
+DEBUG:   192.54.112.30
+DEBUG:   192.31.80.30
+DEBUG:   192.33.14.30
+DEBUG:   192.35.51.30
+DEBUG:   192.52.178.30
+DEBUG:   192.55.83.30
+DEBUG:   192.43.172.30
+DEBUG:   192.42.93.30
+DEBUG:   192.5.6.30
+DEBUG:   192.26.92.30
+DEBUG:   192.12.94.30
+DEBUG: Querying 192.41.162.30 for www.amazon.com - got 224 bytes
+DEBUG: Parsed response from 192.41.162.30 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=4 Additional=3
+DEBUG: Found 4 NS records in authority (referral)
+DEBUG:   NS: ns-521.awsdns-01.net
+DEBUG:   NS: ns-264.awsdns-33.com
+DEBUG:   NS: ns-1707.awsdns-21.co.uk
+DEBUG:   NS: ns-1447.awsdns-52.org
+DEBUG: Found 1 NS IPs in additional section
+DEBUG:   205.251.193.8
+DEBUG: Querying 205.251.193.8 for www.amazon.com - got 216 bytes
+DEBUG: Parsed response from 205.251.193.8 - QR=true RCODE=NoError TC=false Questions=1 Answers=1 Authority=4 Additional=1
+DEBUG: CNAME www.amazon.com -> tp.47cf2c8c9-frontier.amazon.com
+DEBUG: Caching CNAME www.amazon.com -> tp.47cf2c8c9-frontier.amazon.com (TTL 1800)
+DEBUG: Querying 198.41.0.4 for tp.47cf2c8c9-frontier.amazon.com - got 857 bytes
+DEBUG: Parsed response from 198.41.0.4 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=13 Additional=27
+DEBUG: Found 13 NS records in authority (referral)
+DEBUG:   NS: l.gtld-servers.net
+DEBUG:   NS: j.gtld-servers.net
+DEBUG:   NS: h.gtld-servers.net
+DEBUG:   NS: d.gtld-servers.net
+DEBUG:   NS: b.gtld-servers.net
+DEBUG:   NS: f.gtld-servers.net
+DEBUG:   NS: k.gtld-servers.net
+DEBUG:   NS: m.gtld-servers.net
+DEBUG:   NS: i.gtld-servers.net
+DEBUG:   NS: g.gtld-servers.net
+DEBUG:   NS: a.gtld-servers.net
+DEBUG:   NS: c.gtld-servers.net
+DEBUG:   NS: e.gtld-servers.net
+DEBUG: Found 13 NS IPs in additional section
+DEBUG:   192.41.162.30
+DEBUG:   192.48.79.30
+DEBUG:   192.54.112.30
+DEBUG:   192.31.80.30
+DEBUG:   192.33.14.30
+DEBUG:   192.35.51.30
+DEBUG:   192.52.178.30
+DEBUG:   192.55.83.30
+DEBUG:   192.43.172.30
+DEBUG:   192.42.93.30
+DEBUG:   192.5.6.30
+DEBUG:   192.26.92.30
+DEBUG:   192.12.94.30
+DEBUG: Querying 192.41.162.30 for tp.47cf2c8c9-frontier.amazon.com - got 242 bytes
+DEBUG: Parsed response from 192.41.162.30 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=4 Additional=3
+DEBUG: Found 4 NS records in authority (referral)
+DEBUG:   NS: ns-521.awsdns-01.net
+DEBUG:   NS: ns-264.awsdns-33.com
+DEBUG:   NS: ns-1707.awsdns-21.co.uk
+DEBUG:   NS: ns-1447.awsdns-52.org
+DEBUG: Found 1 NS IPs in additional section
+DEBUG:   205.251.193.8
+DEBUG: Querying 205.251.193.8 for tp.47cf2c8c9-frontier.amazon.com - got 198 bytes
+DEBUG: Parsed response from 205.251.193.8 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=4 Additional=1
+DEBUG: Found 4 NS records in authority (referral)
+DEBUG:   NS: ns-1404.awsdns-47.org
+DEBUG:   NS: ns-1881.awsdns-43.co.uk
+DEBUG:   NS: ns-477.awsdns-59.com
+DEBUG:   NS: ns-553.awsdns-05.net
+DEBUG: No NS IPs in additional section, trying NS names one at a time
+DEBUG: Trying to resolve NS: ns-1404.awsdns-47.org
+DEBUG: Querying 198.41.0.4 for ns-1404.awsdns-47.org - got 435 bytes
+DEBUG: Parsed response from 198.41.0.4 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=6 Additional=13
+DEBUG: Found 6 NS records in authority (referral)
+DEBUG:   NS: v0n3.pir-ns.org
+DEBUG:   NS: v0n0.pir-ns.org
+DEBUG:   NS: v2n1.pir-ns.org
+DEBUG:   NS: v0n2.pir-ns.org
+DEBUG:   NS: v0n1.pir-ns.org
+DEBUG:   NS: v2n0.pir-ns.org
+DEBUG: Found 6 NS IPs in additional section
+DEBUG:   199.19.57.1
+DEBUG:   199.19.56.1
+DEBUG:   199.249.120.1
+DEBUG:   199.19.53.1
+DEBUG:   199.19.54.1
+DEBUG:   199.249.112.1
+DEBUG: Querying 199.19.57.1 for ns-1404.awsdns-47.org - got 320 bytes
+DEBUG: Parsed response from 199.19.57.1 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=4 Additional=9
+DEBUG: Found 4 NS records in authority (referral)
+DEBUG:   NS: g-ns-1074.awsdns-47.org
+DEBUG:   NS: g-ns-175.awsdns-47.org
+DEBUG:   NS: g-ns-753.awsdns-47.org
+DEBUG:   NS: g-ns-1647.awsdns-47.org
+DEBUG: Found 4 NS IPs in additional section
+DEBUG:   205.251.192.175
+DEBUG:   205.251.194.241
+DEBUG:   205.251.196.50
+DEBUG:   205.251.198.111
+DEBUG: Querying 205.251.192.175 for ns-1404.awsdns-47.org - got 336 bytes
+DEBUG: Parsed response from 205.251.192.175 - QR=true RCODE=NoError TC=false Questions=1 Answers=1 Authority=4 Additional=9
+DEBUG: Found 1 IP records for ns-1404.awsdns-47.org
+DEBUG:   205.251.197.124
+DEBUG: Caching ns-1404.awsdns-47.org -> 1 (TTL 3600)
+DEBUG: Resolved NS ns-1404.awsdns-47.org -> 205.251.197.124, trying to query
+DEBUG: Querying 205.251.197.124 for tp.47cf2c8c9-frontier.amazon.com - got 234 bytes
+DEBUG: Parsed response from 205.251.197.124 - QR=true RCODE=NoError TC=false Questions=1 Answers=2 Authority=4 Additional=1
+DEBUG: CNAME tp.47cf2c8c9-frontier.amazon.com -> cf.47cf2c8c9-frontier.amazon.com
+DEBUG: Caching CNAME tp.47cf2c8c9-frontier.amazon.com -> cf.47cf2c8c9-frontier.amazon.com (TTL 60)
+DEBUG: Querying 198.41.0.4 for cf.47cf2c8c9-frontier.amazon.com - got 857 bytes
+DEBUG: Parsed response from 198.41.0.4 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=13 Additional=27
+DEBUG: Found 13 NS records in authority (referral)
+DEBUG:   NS: l.gtld-servers.net
+DEBUG:   NS: j.gtld-servers.net
+DEBUG:   NS: h.gtld-servers.net
+DEBUG:   NS: d.gtld-servers.net
+DEBUG:   NS: b.gtld-servers.net
+DEBUG:   NS: f.gtld-servers.net
+DEBUG:   NS: k.gtld-servers.net
+DEBUG:   NS: m.gtld-servers.net
+DEBUG:   NS: i.gtld-servers.net
+DEBUG:   NS: g.gtld-servers.net
+DEBUG:   NS: a.gtld-servers.net
+DEBUG:   NS: c.gtld-servers.net
+DEBUG:   NS: e.gtld-servers.net
+DEBUG: Found 13 NS IPs in additional section
+DEBUG:   192.41.162.30
+DEBUG:   192.48.79.30
+DEBUG:   192.54.112.30
+DEBUG:   192.31.80.30
+DEBUG:   192.33.14.30
+DEBUG:   192.35.51.30
+DEBUG:   192.52.178.30
+DEBUG:   192.55.83.30
+DEBUG:   192.43.172.30
+DEBUG:   192.42.93.30
+DEBUG:   192.5.6.30
+DEBUG:   192.26.92.30
+DEBUG:   192.12.94.30
+DEBUG: Querying 192.41.162.30 for cf.47cf2c8c9-frontier.amazon.com - got 242 bytes
+DEBUG: Parsed response from 192.41.162.30 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=4 Additional=3
+DEBUG: Found 4 NS records in authority (referral)
+DEBUG:   NS: ns-521.awsdns-01.net
+DEBUG:   NS: ns-264.awsdns-33.com
+DEBUG:   NS: ns-1707.awsdns-21.co.uk
+DEBUG:   NS: ns-1447.awsdns-52.org
+DEBUG: Found 1 NS IPs in additional section
+DEBUG:   205.251.193.8
+DEBUG: Querying 205.251.193.8 for cf.47cf2c8c9-frontier.amazon.com - got 198 bytes
+DEBUG: Parsed response from 205.251.193.8 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=4 Additional=1
+DEBUG: Found 4 NS records in authority (referral)
+DEBUG:   NS: ns-1404.awsdns-47.org
+DEBUG:   NS: ns-1881.awsdns-43.co.uk
+DEBUG:   NS: ns-477.awsdns-59.com
+DEBUG:   NS: ns-553.awsdns-05.net
+DEBUG: No NS IPs in additional section, trying NS names one at a time
+DEBUG: Trying to resolve NS: ns-1404.awsdns-47.org
+DEBUG: Cache hit for ns-1404.awsdns-47.org (A) - 1 address(es)
+DEBUG: Resolved NS ns-1404.awsdns-47.org -> 205.251.197.124, trying to query
+DEBUG: Querying 205.251.197.124 for cf.47cf2c8c9-frontier.amazon.com - got 214 bytes
+DEBUG: Parsed response from 205.251.197.124 - QR=true RCODE=NoError TC=false Questions=1 Answers=1 Authority=4 Additional=1
+DEBUG: Found 1 IP records for cf.47cf2c8c9-frontier.amazon.com
+DEBUG:   99.84.51.194
+DEBUG: Caching cf.47cf2c8c9-frontier.amazon.com -> 1 (TTL 60)
+DEBUG: Got answer via 205.251.197.124
+DEBUG: Got answer via 205.251.197.124
+=== Resolution complete ===
+Results:
+  99.84.51.194
+Resolving: doesnotexist-syvreth-12345.com (A)
+
+=== Resolving doesnotexist-syvreth-12345.com (A) ===
+DEBUG: Querying 198.41.0.4 for doesnotexist-syvreth-12345.com - got 855 bytes
+DEBUG: Parsed response from 198.41.0.4 - QR=true RCODE=NoError TC=false Questions=1 Answers=0 Authority=13 Additional=27
+DEBUG: Found 13 NS records in authority (referral)
+DEBUG:   NS: l.gtld-servers.net
+DEBUG:   NS: j.gtld-servers.net
+DEBUG:   NS: h.gtld-servers.net
+DEBUG:   NS: d.gtld-servers.net
+DEBUG:   NS: b.gtld-servers.net
+DEBUG:   NS: f.gtld-servers.net
+DEBUG:   NS: k.gtld-servers.net
+DEBUG:   NS: m.gtld-servers.net
+DEBUG:   NS: i.gtld-servers.net
+DEBUG:   NS: g.gtld-servers.net
+DEBUG:   NS: a.gtld-servers.net
+DEBUG:   NS: c.gtld-servers.net
+DEBUG:   NS: e.gtld-servers.net
+DEBUG: Found 13 NS IPs in additional section
+DEBUG:   192.41.162.30
+DEBUG:   192.48.79.30
+DEBUG:   192.54.112.30
+DEBUG:   192.31.80.30
+DEBUG:   192.33.14.30
+DEBUG:   192.35.51.30
+DEBUG:   192.52.178.30
+DEBUG:   192.55.83.30
+DEBUG:   192.43.172.30
+DEBUG:   192.42.93.30
+DEBUG:   192.5.6.30
+DEBUG:   192.26.92.30
+DEBUG:   192.12.94.30
+DEBUG: Querying 192.41.162.30 for doesnotexist-syvreth-12345.com - got 132 bytes
+DEBUG: Parsed response from 192.41.162.30 - QR=true RCODE=NameError TC=false Questions=1 Answers=0 Authority=1 Additional=1
+Error: NXDOMAIN for doesnotexist-syvreth-12345.com

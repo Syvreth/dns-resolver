@@ -1,150 +1,174 @@
 //! TTL-aware DNS cache
 //!
-//! Stores resolved records with their TTL and expiry time.
-//! Used to avoid redundant queries during resolution.
+//! Three separate stores, each entry with its own expiry:
+//! - answers:  (name, type) -> addresses   (also used for nameserver addresses / glue)
+//! - cnames:   name -> alias target
+//! - nxdomain: names known not to exist (negative caching)
+//!
+//! Keeping them separate means one kind of entry can never hide or overwrite another.
 
 use crate::packet::RecordType;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-#[derive(Clone)]
-pub struct CacheEntry {
-    pub ips: Vec<(String, Option<String>)>,
-    ns_ips: Vec<String>,
-    ns_names: Vec<String>,
-    cnames: Vec<String>,
-    rcode: u8,
-    expiry: u64,
+/// TTL used for negative (NXDOMAIN) entries.
+pub const NEGATIVE_TTL: u32 = 300;
+
+struct Entry<T> {
+    value: T,
+    expires: Instant,
 }
 
-impl CacheEntry {
-    fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now >= self.expiry
+impl<T> Entry<T> {
+    fn new(value: T, ttl: u32) -> Self {
+        Entry { value, expires: Instant::now() + Duration::from_secs(ttl as u64) }
+    }
+
+    fn is_live(&self) -> bool {
+        Instant::now() < self.expires
     }
 }
 
+pub type Answers = Vec<(String, Option<String>)>;
+
+#[derive(Default)]
 pub struct DnsCache {
-    cache: HashMap<String, CacheEntry>,
+    answers: HashMap<(String, u16), Entry<Answers>>,
+    cnames: HashMap<String, Entry<String>>,
+    nxdomain: HashMap<String, Entry<()>>,
+}
+
+fn norm(name: &str) -> String {
+    name.trim_end_matches('.').to_lowercase()
 }
 
 impl DnsCache {
     pub fn new() -> Self {
-        DnsCache {
-            cache: HashMap::new(),
+        Self::default()
+    }
+
+    /// Cached addresses for (name, type), if present and not expired.
+    pub fn get_answer(&self, name: &str, qtype: RecordType) -> Option<Answers> {
+        self.answers
+            .get(&(norm(name), qtype.to_u16()))
+            .filter(|e| e.is_live() && !e.value.is_empty())
+            .map(|e| e.value.clone())
+    }
+
+    /// Replace the cached addresses for (name, type).
+    pub fn put_answer(&mut self, name: &str, qtype: RecordType, answers: Answers, ttl: u32) {
+        if ttl == 0 || answers.is_empty() {
+            return;
+        }
+        self.answers.insert((norm(name), qtype.to_u16()), Entry::new(answers, ttl));
+    }
+
+    /// Add one address to (name, type) without dropping the others (used for glue records,
+    /// which arrive one address per record). The entry keeps the shortest TTL seen.
+    pub fn add_address(&mut self, name: &str, qtype: RecordType, addr: String, ttl: u32) {
+        if ttl == 0 {
+            return;
+        }
+        let key = (norm(name), qtype.to_u16());
+        let fresh = Entry::new(Vec::new(), ttl);
+        let entry = self.answers.entry(key).or_insert_with(|| Entry::new(Vec::new(), ttl));
+        if !entry.is_live() {
+            *entry = fresh;
+        } else if fresh.expires < entry.expires {
+            entry.expires = fresh.expires;
+        }
+        if !entry.value.iter().any(|(a, _)| *a == addr) {
+            entry.value.push((addr, None));
         }
     }
 
-    fn key(domain: &str, qtype: RecordType) -> String {
-        format!("{}:{}", domain.to_lowercase(), qtype)
+    pub fn get_cname(&self, name: &str) -> Option<String> {
+        self.cnames
+            .get(&norm(name))
+            .filter(|e| e.is_live())
+            .map(|e| e.value.clone())
     }
 
-    pub fn get(&self, domain: &str, qtype: RecordType) -> Option<&CacheEntry> {
-        self.cache
-            .get(&Self::key(domain, qtype))
-            .filter(|e| !e.is_expired())
+    pub fn put_cname(&mut self, name: &str, target: &str, ttl: u32) {
+        if ttl == 0 {
+            return;
+        }
+        self.cnames.insert(norm(name), Entry::new(target.to_string(), ttl));
     }
 
-    pub fn get_ips(&self, domain: &str, qtype: RecordType) -> Option<Vec<(String, Option<String>)>> {
-        self.get(domain, qtype)
-            .map(|e| e.ips.clone())
+    pub fn is_nxdomain(&self, name: &str) -> bool {
+        self.nxdomain.get(&norm(name)).is_some_and(|e| e.is_live())
     }
 
-    pub fn get_ns_ips(&self, ns_name: &str) -> Option<Vec<String>> {
-        self.get(ns_name, RecordType::A)
-            .map(|e| e.ns_ips.clone())
+    pub fn put_nxdomain(&mut self, name: &str, ttl: u32) {
+        if ttl == 0 {
+            return;
+        }
+        self.nxdomain.insert(norm(name), Entry::new((), ttl));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ips(list: &[&str]) -> Answers {
+        list.iter().map(|s| (s.to_string(), None)).collect()
     }
 
-    pub fn set(&mut self, domain: &str, qtype: RecordType, ips: Vec<(String, Option<String>)>, ttl: u32) {
-        let entry = self
-            .cache
-            .entry(Self::key(domain, qtype))
-            .or_insert_with(|| CacheEntry {
-                ips: Vec::new(),
-                ns_ips: Vec::new(),
-                ns_names: Vec::new(),
-                cnames: Vec::new(),
-                rcode: 0,
-                expiry: 0,
-            });
-        entry.ips = ips;
-        entry.expiry = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + ttl as u64;
+    #[test]
+    fn answer_round_trip_is_case_and_dot_insensitive() {
+        let mut c = DnsCache::new();
+        c.put_answer("Example.COM.", RecordType::A, ips(&["1.2.3.4"]), 60);
+        assert_eq!(c.get_answer("example.com", RecordType::A), Some(ips(&["1.2.3.4"])));
+        assert_eq!(c.get_answer("example.com", RecordType::AAAA), None);
     }
 
-    pub fn set_ns_ips(&mut self, ns_name: &str, ips: Vec<String>, ttl: u32) {
-        let entry = self
-            .cache
-            .entry(Self::key(ns_name, RecordType::A))
-            .or_insert_with(|| CacheEntry {
-                ips: Vec::new(),
-                ns_ips: Vec::new(),
-                ns_names: Vec::new(),
-                cnames: Vec::new(),
-                rcode: 0,
-                expiry: 0,
-            });
-        entry.ns_ips = ips;
-        entry.expiry = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + ttl as u64;
+    #[test]
+    fn nameserver_resolved_as_answer_is_found_later() {
+        // The old bug: a name resolved as an answer looked "cached but empty" when it was
+        // looked up again as a nameserver, so the nameserver was skipped.
+        let mut c = DnsCache::new();
+        c.put_answer("ns-1404.awsdns-47.org", RecordType::A, ips(&["205.251.197.124"]), 172800);
+        assert_eq!(
+            c.get_answer("ns-1404.awsdns-47.org", RecordType::A),
+            Some(ips(&["205.251.197.124"]))
+        );
     }
 
-    pub fn get_cnames(&self, domain: &str) -> Option<Vec<String>> {
-        self.get(domain, RecordType::CNAME)
-            .map(|e| e.cnames.clone())
+    #[test]
+    fn glue_addresses_accumulate_without_duplicates() {
+        let mut c = DnsCache::new();
+        c.add_address("a.gtld-servers.net", RecordType::A, "192.5.6.30".into(), 172800);
+        c.add_address("a.gtld-servers.net", RecordType::A, "192.5.6.31".into(), 172800);
+        c.add_address("a.gtld-servers.net", RecordType::A, "192.5.6.30".into(), 172800);
+        assert_eq!(
+            c.get_answer("a.gtld-servers.net", RecordType::A),
+            Some(ips(&["192.5.6.30", "192.5.6.31"]))
+        );
     }
 
-    pub fn set_cname(&mut self, domain: &str, target: String, ttl: u32) {
-        let entry = self
-            .cache
-            .entry(Self::key(domain, RecordType::CNAME))
-            .or_insert_with(|| CacheEntry {
-                ips: Vec::new(),
-                ns_ips: Vec::new(),
-                ns_names: Vec::new(),
-                cnames: Vec::new(),
-                rcode: 0,
-                expiry: 0,
-            });
-        entry.cnames.push(target);
-        entry.expiry = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + ttl as u64;
+    #[test]
+    fn stores_do_not_collide() {
+        let mut c = DnsCache::new();
+        c.put_cname("www.example.com", "cdn.example.net", 60);
+        c.put_nxdomain("nope.example.com", 60);
+        assert_eq!(c.get_answer("www.example.com", RecordType::A), None);
+        assert_eq!(c.get_cname("www.example.com").as_deref(), Some("cdn.example.net"));
+        assert!(c.is_nxdomain("nope.example.com"));
+        assert!(!c.is_nxdomain("www.example.com"));
     }
 
-    pub fn get_rcode(&self, domain: &str, qtype: RecordType) -> Option<u8> {
-        self.get(domain, qtype)
-            .map(|e| e.rcode)
-    }
+    #[test]
+    fn zero_ttl_is_not_cached_and_entries_expire() {
+        let mut c = DnsCache::new();
+        c.put_answer("zero.example", RecordType::A, ips(&["9.9.9.9"]), 0);
+        assert_eq!(c.get_answer("zero.example", RecordType::A), None);
 
-    pub fn set_rcode(&mut self, domain: &str, qtype: RecordType, rcode: u8, ttl: u32) {
-        let entry = self
-            .cache
-            .entry(Self::key(domain, qtype))
-            .or_insert_with(|| CacheEntry {
-                ips: Vec::new(),
-                ns_ips: Vec::new(),
-                ns_names: Vec::new(),
-                cnames: Vec::new(),
-                rcode: 0,
-                expiry: 0,
-            });
-        entry.rcode = rcode;
-        entry.expiry = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + ttl as u64;
+        // Force an entry into the past to check expiry.
+        c.put_answer("old.example", RecordType::A, ips(&["8.8.8.8"]), 60);
+        c.answers.get_mut(&("old.example".into(), 1)).unwrap().expires =
+            Instant::now() - Duration::from_secs(1);
+        assert_eq!(c.get_answer("old.example", RecordType::A), None);
     }
 }

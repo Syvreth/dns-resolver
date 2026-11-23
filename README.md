@@ -9,24 +9,40 @@
 
 - **Fully recursive:** starts at the root servers and follows each referral down to the domain's own nameservers
 - **Hand-rolled packets:** encodes and decodes DNS messages byte by byte, including name compression
-- **CNAME chains:** follows aliases across zones, restarting from the root each time
+- **CNAME chains:** follows aliases across zones, starting each hop at the closest zone it already knows
+- **TTL-aware cache:** keeps answers, CNAMEs, NXDOMAINs and zone delegations until their TTL runs out
+- **Delegation cache:** remembers each zone's nameservers, so a lookup skips the root and TLD when it can, and falls back to the root if the cached servers fail
 - **No-glue nameservers:** looks up nameservers that live in other zones
 - **EDNS0:** advertises a 4096-byte UDP payload so large replies aren't truncated
 - **TCP fallback:** retries over TCP when a reply comes back truncated
 - **A and AAAA** lookups, with a random query ID on every query
+- **Quiet by default:** prints only the results; `-v` / `--verbose` shows every query, referral and cache hit
 
 ## 🚀 Usage
 
 ```bash
 cargo run -- www.google.com          # A record
 cargo run -- www.google.com AAAA     # AAAA record
+cargo run -- -v www.amazon.com       # show each step of the lookup
 ```
 
 ```
 $ cargo run -- www.amazon.com
+Results:
+  13.249.20.221
+```
+
+With `-v`, you can watch the delegation cache at work. After the first CNAME, each hop starts at a zone it already knows instead of at the root:
+
+```
+$ cargo run -- -v www.amazon.com
 ...
 DEBUG: CNAME www.amazon.com -> tp.47cf2c8c9-frontier.amazon.com
+DEBUG: Starting tp.47cf2c8c9-frontier.amazon.com at cached zone amazon.com (1 server(s))
+...
 DEBUG: CNAME tp.47cf2c8c9-frontier.amazon.com -> cf.47cf2c8c9-frontier.amazon.com
+DEBUG: Starting cf.47cf2c8c9-frontier.amazon.com at cached zone 47cf2c8c9-frontier.amazon.com (1 server(s))
+...
 === Resolution complete ===
 Results:
   13.249.20.221
@@ -37,14 +53,20 @@ Results:
 ```
 root (.)  ──►  .com TLD  ──►  amazon.com NS  ──►  answer
    │              │                 │
-   └─ referral ───┴─── referral ────┴─ CNAME? restart at root
+   └─ referral ───┴─── referral ────┴─ CNAME? restart at the closest cached zone
 ```
+
+Every referral is cached as zone → nameserver IPs. A new lookup walks up the name's labels
+(`cf.x.amazon.com` → `x.amazon.com` → `amazon.com` → `com`) and starts at the first zone it has
+servers for. It starts at the root only when nothing is cached or the cached servers fail.
 
 | File | Role |
 |---|---|
 | `src/packet.rs` | DNS wire format: header, questions, records, name compression |
 | `src/transport.rs` | UDP queries with retries, TCP fallback |
-| `src/resolver.rs` | Iterative resolution: referrals, glue, CNAMEs |
+| `src/resolver.rs` | Iterative resolution: referrals, glue, CNAMEs, closest-zone start |
+| `src/cache.rs` | TTL cache: answers, CNAMEs, NXDOMAINs and zone delegations |
+| `src/log.rs` | `-v` / `--verbose` switch and the `debug!` macro |
 | `src/main.rs` | Command-line interface |
 
 ## 🗺️ Feature plan
@@ -58,12 +80,12 @@ root (.)  ──►  .com TLD  ──►  amazon.com NS  ──►  answer
   *Check: root replies show `TC=false`.*
 - [ ] **First working nameserver:** use the first nameserver that resolves instead of resolving all of them.
   *Check: `www.amazon.com` takes far fewer queries.*
-- [ ] **TTL-aware cache:** remember answers and nameserver IPs until their TTL runs out.
+- [x] **TTL-aware cache:** remember answers and nameserver IPs until their TTL runs out.
   *Check: a second lookup in the same run skips the root.*
 - [ ] **Faster failover:** shorter timeouts, and pick a random root server instead of always the first.
 
 ### Phase 2: Usability
-- [ ] **`-v` / `--verbose`:** hide the DEBUG lines unless asked.
+- [x] **`-v` / `--verbose`:** hide the DEBUG lines unless asked.
 - [ ] **More record types:** MX, TXT, NS, SOA and PTR (reverse lookups with `-x 8.8.8.8`).
 - [ ] **`+trace` mode:** print the delegation path the way `dig +trace` does.
 - [ ] **Short IPv6 formatting:** use `std::net::Ipv6Addr` (`2001:4860::8888`).

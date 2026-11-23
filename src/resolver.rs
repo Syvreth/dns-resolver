@@ -203,30 +203,36 @@ fn resolve_step(
                 return resolve_step(&mut new_state, &ns_refs);
             }
             
-            // If no IPs in additional section, resolve NS names recursively
-            println!("DEBUG: No NS IPs in additional section, resolving NS names recursively");
-            let mut resolved_ns_ips = Vec::new();
+            // If no IPs in additional section, resolve NS names one at a time and
+            // try querying each as soon as it resolves (lazy resolution).
+            println!("DEBUG: No NS IPs in additional section, trying NS names one at a time");
             for ns_name in &ns_records {
+                println!("DEBUG: Trying to resolve NS: {}", ns_name);
                 if let Ok(results) = resolve(ns_name, RecordType::A) {
                     for (ip, _) in results {
-                        if !resolved_ns_ips.contains(&ip) {
-                            resolved_ns_ips.push(ip);
+                        println!("DEBUG: Resolved NS {} -> {}, trying to query", ns_name, ip);
+                        let mut new_state = QueryState {
+                            domain: state.domain.clone(),
+                            qtype: state.qtype,
+                            depth: state.depth,
+                            visited: HashSet::new(),
+                        };
+                        let servers: Vec<&str> = vec![&ip];
+                        match resolve_step(&mut new_state, &servers) {
+                            Ok(found) => {
+                                println!("DEBUG: Got answer via {}", ip);
+                                return Ok(found);
+                            }
+                            Err(e) => {
+                                println!("DEBUG: Failed via {}: {}", ip, e);
+                            }
                         }
                     }
+                } else {
+                    println!("DEBUG: Failed to resolve NS: {}", ns_name);
                 }
             }
-            
-            if !resolved_ns_ips.is_empty() {
-                let ns_refs: Vec<&str> = resolved_ns_ips.iter().map(|s| s.as_str()).collect();
-                let mut new_state = QueryState {
-                    domain: state.domain.clone(),
-                    qtype: state.qtype,
-                    depth: state.depth,
-                    visited: HashSet::new(),
-                };
-                return resolve_step(&mut new_state, &ns_refs);
-            }
-            // If NS names couldn't be resolved, try next server
+            // If none of the NS names worked, try next server
         } else {
             // No NS referral - check if this is an authoritative "no data" response
             if has_soa_for_domain(&msg, &state.domain) {

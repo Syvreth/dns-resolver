@@ -66,15 +66,15 @@ fn resolve_step(
 
     // Check the cache before sending anything
     if cache.is_nxdomain(&state.domain) {
-        println!("DEBUG: Cache hit: {} does not exist (NXDOMAIN)", state.domain);
+        debug!("DEBUG: Cache hit: {} does not exist (NXDOMAIN)", state.domain);
         return Err(format!("{} for {}", NXDOMAIN, state.domain));
     }
     if let Some(ips) = cache.get_answer(&state.domain, state.qtype) {
-        println!("DEBUG: Cache hit for {} ({}) - {} address(es)", state.domain, state.qtype, ips.len());
+        debug!("DEBUG: Cache hit for {} ({}) - {} address(es)", state.domain, state.qtype, ips.len());
         return Ok(ips);
     }
     if let Some(target) = cache.get_cname(&state.domain) {
-        println!("DEBUG: Cache hit: CNAME {} -> {}", state.domain, target);
+        debug!("DEBUG: Cache hit: CNAME {} -> {}", state.domain, target);
         return resolve_inner(&target, state.qtype, cache, state.depth);
     }
 
@@ -92,19 +92,19 @@ fn resolve_step(
 
         let response = match send_query_with_retries(&server_str, &query, 1500, 2) {
             Ok(response) => {
-                println!("DEBUG: Querying {} for {} - got {} bytes", server_str, state.domain, response.len());
+                debug!("DEBUG: Querying {} for {} - got {} bytes", server_str, state.domain, response.len());
                 response
             }
             Err(e) => {
                 last_error = format!("Query to {} failed: {}", server_str, e);
-                println!("DEBUG: {}", last_error);
+                debug!("DEBUG: {}", last_error);
                 continue;
             }
         };
 
         let mut msg = match parse_message(&response) {
             Ok(msg) => {
-                println!("DEBUG: Parsed response from {} - QR={} RCODE={:?} TC={} Questions={} Answers={} Authority={} Additional={}", 
+                debug!("DEBUG: Parsed response from {} - QR={} RCODE={:?} TC={} Questions={} Answers={} Authority={} Additional={}", 
                     server_str, msg.header.qr, msg.header.rcode, msg.header.tc,
                     msg.header.question_count, msg.header.answer_count,
                     msg.header.authority_count, msg.header.additional_count);
@@ -112,7 +112,7 @@ fn resolve_step(
             }
             Err(e) => {
                 last_error = format!("Failed to parse response from {}: {}", server_str, e);
-                println!("DEBUG: {}", last_error);
+                debug!("DEBUG: {}", last_error);
                 continue;
             }
         };
@@ -120,33 +120,33 @@ fn resolve_step(
         if msg.header.id != query_id {
             last_error = format!("Response ID mismatch from {} (expected {}, got {})", 
                 server_str, query_id, msg.header.id);
-            println!("DEBUG: {}", last_error);
+            debug!("DEBUG: {}", last_error);
             continue;
         }
 
         // Check for truncated response - retry over TCP
         if msg.header.tc {
-            println!("DEBUG: TC flag set from {}, retrying over TCP", server_str);
+            debug!("DEBUG: TC flag set from {}, retrying over TCP", server_str);
             match send_query_tcp(&server_str, &query, 3000) {
                 Ok(tcp_response) => {
-                    println!("DEBUG: TCP retry from {} - got {} bytes", server_str, tcp_response.len());
+                    debug!("DEBUG: TCP retry from {} - got {} bytes", server_str, tcp_response.len());
                     match parse_message(&tcp_response) {
                         Ok(tcp_msg) => {
                             if tcp_msg.header.id != query_id {
-                                println!("DEBUG: TCP response ID mismatch");
+                                debug!("DEBUG: TCP response ID mismatch");
                                 continue;
                             }
-                            println!("DEBUG: TCP retry successful from {}", server_str);
+                            debug!("DEBUG: TCP retry successful from {}", server_str);
                             msg = tcp_msg;
                         }
                         Err(e) => {
-                            println!("DEBUG: Failed to parse TCP response: {}", e);
+                            debug!("DEBUG: Failed to parse TCP response: {}", e);
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    println!("DEBUG: TCP retry failed: {}", e);
+                    debug!("DEBUG: TCP retry failed: {}", e);
                     continue;
                 }
             }
@@ -186,14 +186,14 @@ fn resolve_step(
         // Check for answer records matching our query
         let results = find_ip_records(&msg, &state.domain);
         if !results.is_empty() {
-            println!("DEBUG: Found {} IP records for {}", results.len(), state.domain);
+            debug!("DEBUG: Found {} IP records for {}", results.len(), state.domain);
             for (ip, _) in &results {
-                println!("DEBUG:   {}", ip);
+                debug!("DEBUG:   {}", ip);
             }
             // Cache the answer with minimum TTL from response
             {
                 let ttl = find_min_ttl(&msg);
-                println!("DEBUG: Caching {} -> {} (TTL {})", state.domain, results.len(), ttl);
+                debug!("DEBUG: Caching {} -> {} (TTL {})", state.domain, results.len(), ttl);
                 cache.put_answer(&state.domain, state.qtype, results.clone(), ttl);
             }
             return Ok(results);
@@ -202,11 +202,11 @@ fn resolve_step(
         // Check for CNAME in answer section
         let cname_records = find_cname_records(&msg, &state.domain);
         if let Some(cname_target) = cname_records.first() {
-            println!("DEBUG: CNAME {} -> {}", state.domain, cname_target);
+            debug!("DEBUG: CNAME {} -> {}", state.domain, cname_target);
             // Cache the CNAME
             {
                 let ttl = find_min_ttl(&msg);
-                println!("DEBUG: Caching CNAME {} -> {} (TTL {})", state.domain, cname_target, ttl);
+                debug!("DEBUG: Caching CNAME {} -> {} (TTL {})", state.domain, cname_target, ttl);
                 cache.put_cname(&state.domain, cname_target, ttl);
             }
             // The CNAME may point into a different zone, so start over from the closest
@@ -217,9 +217,9 @@ fn resolve_step(
         // Check for referral (NS records in authority section)
         let ns_records = find_authority_ns_records(&msg);
         if !ns_records.is_empty() {
-            println!("DEBUG: Found {} NS records in authority (referral)", ns_records.len());
+            debug!("DEBUG: Found {} NS records in authority (referral)", ns_records.len());
             for ns in &ns_records {
-                println!("DEBUG:   NS: {}", ns);
+                debug!("DEBUG:   NS: {}", ns);
             }
 
             // The zone being delegated to, with its NS TTL, if it is one we may cache.
@@ -234,12 +234,12 @@ fn resolve_step(
             // Look for NS server addresses in additional section
             let ns_ips = find_additional_ns_ips(&msg, &ns_records);
             if !ns_ips.is_empty() {
-                println!("DEBUG: Found {} NS IPs in additional section", ns_ips.len());
+                debug!("DEBUG: Found {} NS IPs in additional section", ns_ips.len());
                 for ip in &ns_ips {
-                    println!("DEBUG:   {}", ip);
+                    debug!("DEBUG:   {}", ip);
                 }
                 if let Some((zone, ttl)) = &delegation {
-                    println!("DEBUG: Caching delegation {} -> {} server(s) (TTL {})", zone, ns_ips.len(), ttl);
+                    debug!("DEBUG: Caching delegation {} -> {} server(s) (TTL {})", zone, ns_ips.len(), ttl);
                     cache.put_delegation(zone, ns_ips.clone(), *ttl);
                 }
 
@@ -256,28 +256,28 @@ fn resolve_step(
             
             // If no IPs in additional section, resolve NS names one at a time and
             // try querying each as soon as it resolves (lazy resolution).
-            println!("DEBUG: No NS IPs in additional section, trying NS names one at a time");
+            debug!("DEBUG: No NS IPs in additional section, trying NS names one at a time");
             for ns_name in &ns_records {
-                println!("DEBUG: Trying to resolve NS: {}", ns_name);
+                debug!("DEBUG: Trying to resolve NS: {}", ns_name);
                 
                 // Shares the cache (a cached address comes back without any query) and
                 // carries the current depth, so circular delegations still hit the depth limit.
                 let resolved_ips = match resolve_inner(ns_name, RecordType::A, cache, state.depth) {
                     Ok(results) => results,
                     Err(e) => {
-                        println!("DEBUG: Failed to resolve NS {}: {}", ns_name, e);
+                        debug!("DEBUG: Failed to resolve NS {}: {}", ns_name, e);
                         continue;
                     }
                 };
                 if let Some((zone, ttl)) = &delegation {
                     for (ip, _) in &resolved_ips {
-                        println!("DEBUG: Caching delegation {} -> {} via {} (TTL {})", zone, ip, ns_name, ttl);
+                        debug!("DEBUG: Caching delegation {} -> {} via {} (TTL {})", zone, ip, ns_name, ttl);
                         cache.add_delegation_server(zone, ip.clone(), *ttl);
                     }
                 }
 
                 for (ip, _) in resolved_ips {
-                    println!("DEBUG: Resolved NS {} -> {}, trying to query", ns_name, ip);
+                    debug!("DEBUG: Resolved NS {} -> {}, trying to query", ns_name, ip);
                     let mut new_state = QueryState {
                         domain: state.domain.clone(),
                         qtype: state.qtype,
@@ -288,13 +288,13 @@ fn resolve_step(
                     let servers: Vec<&str> = vec![&ip];
                     match resolve_step(&mut new_state, &servers, cache) {
                         Ok(found) => {
-                            println!("DEBUG: Got answer via {}", ip);
+                            debug!("DEBUG: Got answer via {}", ip);
                             return Ok(found);
                         }
                         // The zone's own nameserver says the name doesn't exist: stop here.
                         Err(e) if e.starts_with(NXDOMAIN) => return Err(e),
                         Err(e) => {
-                            println!("DEBUG: Failed via {}: {}", ip, e);
+                            debug!("DEBUG: Failed via {}: {}", ip, e);
                         }
                     }
                 }
@@ -331,11 +331,11 @@ fn resolve_inner(
     };
 
     if let Some((zone, servers)) = cache.closest_delegation(domain) {
-        println!("DEBUG: Starting {} at cached zone {} ({} server(s))", domain, zone, servers.len());
+        debug!("DEBUG: Starting {} at cached zone {} ({} server(s))", domain, zone, servers.len());
         let server_refs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
         match resolve_step(&mut new_state(&zone), &server_refs, cache) {
             Err(e) if !is_final(&e) => {
-                println!("DEBUG: Cached servers for {} failed ({}), falling back to the root", zone, e);
+                debug!("DEBUG: Cached servers for {} failed ({}), falling back to the root", zone, e);
             }
             result => return result,
         }
@@ -345,10 +345,10 @@ fn resolve_inner(
 }
 
 pub fn resolve_debug(domain: &str, qtype: RecordType) -> Result<Vec<(String, Option<String>)>, String> {
-    println!("=== Resolving {} ({:?}) ===", domain, qtype);
+    debug!("=== Resolving {} ({:?}) ===", domain, qtype);
     let mut cache = DnsCache::new();
     let result = resolve_inner(domain, qtype, &mut cache, 0)?;
-    println!("=== Resolution complete ===");
+    debug!("=== Resolution complete ===");
     Ok(result)
 }
 
